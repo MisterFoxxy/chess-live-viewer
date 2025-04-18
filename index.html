@@ -4,96 +4,105 @@
   <meta charset="utf-8">
   <title>Live‑шахматы</title>
 
-  <!-- СТИЛИ chessground (та же версия, что и JS) -->
-  <link rel="stylesheet"
-        href="https://cdnjs.cloudflare.com/ajax/libs/chessground/8.4.0/chessground.min.css"/>
+  <!-- chessground стили и скрипт (UMD‑сборка = работает в обычном <script>) -->
+  <link  href="https://cdnjs.cloudflare.com/ajax/libs/chessground/8.4.0/chessground.min.css"
+         rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessground/8.4.0/chessground.min.js"
+          defer></script>
+
+  <!-- chess.js – UMD → объект Chess в window -->
+  <script src="https://cdn.jsdelivr.net/npm/chess.js@1.0.0-beta.1/dist/chess.umd.min.js"
+          defer></script>
 
   <style>
-    body{margin:0;font-family:sans-serif;background:#f4f4f4}
-    #boards{display:flex;flex-wrap:wrap;justify-content:center;gap:24px;padding:24px}
-    .board-box{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.12);padding:12px}
-    .players{font-weight:600;font-size:14px;margin-bottom:6px;text-align:center}
+    body{margin:0;font-family:sans-serif;background:#f5f5f5}
+    #boards{display:flex;flex-wrap:wrap;gap:24px;justify-content:center;padding:24px}
+    .box{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.12);padding:12px}
+    .players{font-weight:600;font-size:14px;margin-bottom:6px;text-align:center;min-width:320px}
     .cg-wrap{width:320px;height:320px}
+    .error{color:#c00;text-align:center;margin-top:40px}
   </style>
 </head>
 
 <body>
   <div id="boards"></div>
+  <div id="error" class="error" hidden></div>
 
-  <!-- UMD‑сборка chessground 8.4.0 -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessground/8.4.0/chessground.min.js"></script>
-  <!-- UMD‑сборка chess.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chess.js@1.0.0-beta.1/dist/chess.umd.min.js"></script>
+<script defer>
+/* ---------- настройки ---------- */
+const PGN_URL    = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // ваш Worker
+const REFRESH_MS = 5000;                                              // обновление (мс)
+/* --------------------------------*/
 
-  <script>
-/* --------- настройки ---------- */
-const PGN_URL    = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // ваш live‑PGN через CF‑Worker
-const REFRESH_MS = 5000;                                              // период обновления (мс)
-/* -------------------------------- */
+const holder = document.getElementById('boards');
+const errBox = document.getElementById('error');
+let slots = []; // {ground,players}
 
-const boardsDiv = document.getElementById('boards');
-let grounds = []; // массив Chessground‑экземпляров
+/*‑‑‑‑‑ функции ‑‑‑‑‑*/
+function ensureSlots(n){
+  while(slots.length < n){
+    const box     = document.createElement('div'); box.className='box';
+    const names   = document.createElement('div'); names.className='players'; box.appendChild(names);
+    const boardEl = document.createElement('div'); boardEl.className='cg-wrap'; box.appendChild(boardEl);
+    holder.appendChild(box);
 
-function parsePGN(text){
-  // делим поток на отдельные партии
-  return text.trim()
-    .split(/\r?\n\r?\n(?=\[Event|\[Site|\[White)/) // блоки начинаются с тегов
-    .filter(Boolean)
-    .map(block=>{
-      // теги
-      const tag = (name)=> (block.match(new RegExp(`\\[${name} "([^"]+)"`))||[])[1]||'?';
-      const white = tag('White');
-      const black = tag('Black');
-
-      // убираем теги и комментарии, остаются только ходы и результат
-      const moves = block
-        .replace(/\[.*\]\s*/g,'')          // PGN‑теги
-        .replace(/\{[^}]*\}/g,'')          // комментарии {…}
-        .replace(/\d+\.(\.\.)?/g,'')       // номера ходов
-        .trim()
-        .split(/\s+/)
-        .filter(s=>!/^(1-0|0-1|1\/2-1\/2|\*)$/.test(s)); // убираем результат
-
-      // получаем конечную позицию
-      const chess = new Chess();
-      moves.forEach(m=>chess.move(m,{sloppy:true}));
-
-      return {white,black,fen: chess.fen()};
-    });
-}
-
-function ensureBoards(n){
-  // создаём недостающие контейнеры и chessground‑доски
-  while (grounds.length < n){
-    const box = document.createElement('div'); box.className='board-box';
-    const players = document.createElement('div'); players.className='players';
-    const cgWrap  = document.createElement('div'); cgWrap.className='cg-wrap';
-    box.append(players,cgWrap); boardsDiv.appendChild(box);
-
-    const ground  = Chessground(cgWrap,{viewOnly:true,resizable:true,coordinates:false});
-    grounds.push({ground,box,players});
+    const ground  = Chessground(boardEl,{viewOnly:true,resizable:true,coordinates:false});
+    slots.push({ground,players:names});
   }
 }
 
-function render(games){
-  ensureBoards(games.length);
+function parsePGN(txt){
+  if(!txt.trim()) return [];
+
+  return txt.trim()
+    .split(/\r?\n\r?\n(?=\[Event|\[Site|\[White|\[Black)/)
+    .filter(Boolean)
+    .map(block=>{
+      const tag = n=> (block.match(new RegExp(String.raw`\[${n} "([^"]+)"`))||[])[1]||'?';
+      const chess = new Chess();
+      block
+        .replace(/\[.*?\]\s*/gs,'')       // теги
+        .replace(/\{[^}]*\}/g,'')         // {комментарии}
+        .replace(/\d+\.(\.\.)?/g,'')      // номера ходов
+        .trim()
+        .split(/\s+/)
+        .filter(s=>!/^(1-0|0-1|1\/2-1\/2|\*)$/.test(s))
+        .forEach(m=> chess.move(m,{sloppy:true}));
+
+      return {white:tag('White'), black:tag('Black'), fen: chess.fen()};
+    });
+}
+
+function renderGames(games){
+  ensureSlots(games.length);
 
   games.forEach((g,i)=>{
-    const {ground,players} = grounds[i];
-    players.textContent = `${g.white} — ${g.black}`;
-    ground.set({fen: g.fen});
+    const s = slots[i];
+    s.players.textContent = `${g.white} — ${g.black}`;
+    s.ground.set({fen:g.fen});
   });
 }
 
-async function update(){
+/*‑‑‑‑‑ цикл обновления ‑‑‑‑‑*/
+async function tick(){
   try{
-    const txt = await (await fetch(PGN_URL + '?t=' + Date.now())).text();
-    render(parsePGN(txt));
-  }catch(err){ console.error('PGN‑загрузка:',err); }
-  setTimeout(update, REFRESH_MS);
+    const res = await fetch(PGN_URL + '?t=' + Date.now());
+    if(!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    const text = await res.text();
+    const games = parsePGN(text);
+    if(!games.length) throw new Error('В PGN нет партий');
+    renderGames(games);
+    errBox.hidden = true;
+  }catch(e){
+    console.error(e);
+    errBox.hidden = false;
+    errBox.textContent = 'Не удалось получить PGN: ' + e.message;
+  }finally{
+    setTimeout(tick, REFRESH_MS);
+  }
 }
 
-update(); // старт
-  </script>
+tick(); // запускаем
+</script>
 </body>
 </html>
