@@ -2,115 +2,137 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>Live‑шахматы</title>
+  <title>Live‑шахматы1</title>
 
-  <!-- chessground CSS (правильный путь) -->
+  <!-- jQuery (нужен chessboard.js) -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+
+  <!-- chessboard.js -->
   <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/chessground.min.css">
+        href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 
+  <!-- chess.js — логика и PGN‑парсер -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.13.4/chess.min.js"></script>
+
+  <!-- оформление карточек -->
   <style>
-    /* ───── оформление страницы ───── */
-    :root{
-      --tile-light:#f0d9b5;      /* светлые поля */
-      --tile-dark :#b58863;      /* тёмные поля  */
-    }
     body{margin:0;font-family:sans-serif;background:#f4f4f4}
     #boards{display:flex;flex-wrap:wrap;justify-content:center;padding:1rem}
-    .board{
-      width:340px;margin:.9rem;background:#fff;border-radius:10px;
-      box-shadow:0 2px 8px rgba(0,0,0,.06);overflow:hidden}
-    .name{
-      padding:.4rem .6rem;font-weight:600;text-align:center;
-      background:#fff;border-bottom:1px solid #e5e5e5}
-    .cg-wrap{width:100%;height:320px}
 
-    /* переопределяем цвета полей chessground */
-    .cg-board .light{background:var(--tile-light)}
-    .cg-board .dark {background:var(--tile-dark) }
+    .card{
+      width:350px;margin:1rem;background:#fff;border-radius:10px;
+      box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;flex-direction:column;
+      overflow:hidden
+    }
+    .name{
+      padding:.5rem;text-align:center;font-weight:600;
+      border-bottom:1px solid #eee
+    }
+    .square-box{width:100%;padding-bottom:100%;position:relative}   /* квадрат‑контейнер */
+    .square-box>div{position:absolute;top:0;left:0;width:100%;height:100%}
+
+    .moves{
+      padding:.4rem .6rem;font-size:.85rem;line-height:1.3;
+      white-space:pre-wrap;max-height:120px;overflow-y:auto;
+      background:#fafafa;border-top:1px solid #eee
+    }
   </style>
 </head>
-
 <body>
   <div id="boards"></div>
 
-  <!-- chessground + chess.js (jsDelivr) -->
-  <script defer
-          src="https://cdn.jsdelivr.net/npm/chessground@9.1.1/chessground.min.js"></script>
-  <script defer
-          src="https://cdn.jsdelivr.net/npm/chess.js@1.0.0-beta.1/dist/chess.min.js"></script>
-
   <script>
-  /********************* настройки *************************/
+  /*************** настройки *****************/
   const PGN_URL    = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // live‑PGN
   const REFRESH_MS = 5000;                                              // период обновления
-  /*********************************************************/
+  /*******************************************/
 
-  const wrapEl = document.getElementById('boards');
-  const boards = [];                       // {ground, wrapper}
+  const cards = [];     // { board, nameDiv, movesDiv }
 
-  function createBoard(){
-    const wrapper = document.createElement('div'); wrapper.className = 'board';
+  /* ── создаёт карточку с пустой доской ─────────────────────────── */
+  function createCard(){
+    const card = document.createElement('div'); card.className = 'card';
 
-    const caption = document.createElement('div'); caption.className = 'name';
-    wrapper.appendChild(caption);
+    const name = document.createElement('div'); name.className = 'name';
+    card.appendChild(name);
 
-    const cgHost  = document.createElement('div'); cgHost.className  = 'cg-wrap';
-    wrapper.appendChild(cgHost);
+    const square = document.createElement('div'); square.className = 'square-box';
+    const boardHost = document.createElement('div');
+    square.appendChild(boardHost); card.appendChild(square);
 
-    wrapEl.appendChild(wrapper);
+    const moves = document.createElement('div'); moves.className = 'moves';
+    card.appendChild(moves);
 
-    const ground = Chessground(cgHost,{
-      viewOnly:true,
-      coordinates:false,
-      resizable:true
+    document.getElementById('boards').appendChild(card);
+
+    const board = Chessboard(boardHost, {
+      draggable  : false,
+      position   : 'start',
+      pieceTheme : 'https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/img/chesspieces/wikipedia/{piece}.png'
     });
-    return {ground, wrapper};
+    return { board, nameDiv: name, movesDiv: moves };
   }
 
-  function ensureBoards(n){
-    while (boards.length < n) boards.push(createBoard());
+  /* ── гарантируем, что карточек >= числу партий ───────────────── */
+  function ensureCards(n){
+    while(cards.length < n) cards.push(createCard());
   }
 
+  /* ── выводим партии на экран ──────────────────────────────────── */
   function render(games){
-    ensureBoards(games.length);
+    ensureCards(games.length);
 
-    games.forEach((g,i)=>{
-      const {ground, wrapper} = boards[i];
-      wrapper.querySelector('.name').textContent = `${g.white} — ${g.black}`;
+    games.forEach((g, i) => {
+      const { board, nameDiv, movesDiv } = cards[i];
+
+      nameDiv.textContent = `${g.white} — ${g.black}`;
 
       const chess = new Chess();
       g.moves.forEach(m => chess.move(m));
-      ground.set({fen: chess.fen()});
+      board.position(chess.fen());
+
+      /* компактный список ходов: 1.e4 e5 2.Nf3 … */
+      const movesTxt = g.moves
+        .map((m, idx) => (idx % 2 ? m : (Math.floor(idx/2)+1) + '. ' + m))
+        .join(' ')
+        .trim();
+      movesDiv.textContent = movesTxt;
     });
   }
 
+  /* ── разбор PGN в [{white, black, moves[]}, …] ───────────────── */
   function parsePGN(text){
     return text
-      .split(/\n\n(?=\[Event|\[Site|\[White|\[Black)/g).filter(Boolean)
-      .map(block=>{
-        const white = (block.match(/\[White "([^"]+)"/)||['','?'])[1];
-        const black = (block.match(/\[Black "([^"]+)"/)||['','?'])[1];
+      .split(/\n\n(?=\[Event|\[Site|\[White|\[Black)/).filter(Boolean)
+      .map(block => {
+        const white = (block.match(/\[White "([^"]*)"/) || [, '?'])[1];
+        const black = (block.match(/\[Black "([^"]*)"/) || [, '?'])[1];
+
         const moves = block
-          .replace(/\[.*?\]\s*/g,'')         // теги
-          .replace(/\{[^}]*\}/g,'')          // комментарии
-          .replace(/\d+\.(\.\.)?/g,'')       // номера ходов
+          .replace(/\[.*?\]\s*/g,'')          // теги
+          .replace(/\{[^}]*\}/g,'')           // комментарии
+          .replace(/\d+\.(\.\.)?/g,'')        // номера ходов
           .trim().split(/\s+/)
-          .filter(s=>!/^(1-0|0-1|1\/2-1\/2|\*)$/.test(s));
-        return {white, black, moves};
+          .filter(tok => !/^(1-0|0-1|1\/2-1\/2|\*)$/.test(tok));
+
+        return { white, black, moves };
       });
   }
 
-  async function fetchAndUpdate(){
+  /* ── периодически тянем PGN и обновляем доски ─────────────────── */
+  async function tick(){
     try{
-      const txt = await (await fetch(PGN_URL + '?t=' + Date.now())).text();
-      render(parsePGN(txt));
+      const txt   = await (await fetch(PGN_URL + '?t=' + Date.now())).text();
+      const games = parsePGN(txt);
+      render(games);
     }catch(e){
-      console.error('Ошибка при получении PGN:', e);
+      console.error('PGN fetch/parse error:', e);
     }finally{
-      setTimeout(fetchAndUpdate, REFRESH_MS);
+      setTimeout(tick, REFRESH_MS);
     }
   }
-  fetchAndUpdate();
+  tick();
   </script>
 </body>
 </html>
