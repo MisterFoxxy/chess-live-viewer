@@ -2,17 +2,17 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>Live1‑шахматы</title>
+  <title>Live‑шахматы</title>
 
-  <!-- chessground: CSS с jsDelivr (корректный Content‑Type) -->
+  <!-- chessground CSS (правильный путь) -->
   <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/dist/chessground.min.css">
+        href="https://cdn.jsdelivr.net/npm/chessground@9.1.1/chessground.min.css">
 
   <style>
-    /* ───────────── оформление страницы ───────────── */
+    /* ───── оформление страницы ───── */
     :root{
-      --tile-light:#f0d9b5;     /* цвета полей такие же, как у lichess */
-      --tile-dark :#b58863;
+      --tile-light:#f0d9b5;      /* светлые поля */
+      --tile-dark :#b58863;      /* тёмные поля  */
     }
     body{margin:0;font-family:sans-serif;background:#f4f4f4}
     #boards{display:flex;flex-wrap:wrap;justify-content:center;padding:1rem}
@@ -23,7 +23,8 @@
       padding:.4rem .6rem;font-weight:600;text-align:center;
       background:#fff;border-bottom:1px solid #e5e5e5}
     .cg-wrap{width:100%;height:320px}
-    /* переопределяем стандартные цвета клеток chessground */
+
+    /* переопределяем цвета полей chessground */
     .cg-board .light{background:var(--tile-light)}
     .cg-board .dark {background:var(--tile-dark) }
   </style>
@@ -34,27 +35,26 @@
 
   <!-- chessground + chess.js (jsDelivr) -->
   <script defer
-          src="https://cdn.jsdelivr.net/npm/chessground@9.1.1/dist/chessground.min.js"></script>
+          src="https://cdn.jsdelivr.net/npm/chessground@9.1.1/chessground.min.js"></script>
   <script defer
           src="https://cdn.jsdelivr.net/npm/chess.js@1.0.0-beta.1/dist/chess.min.js"></script>
 
   <script>
   /********************* настройки *************************/
-  const PGN_URL    = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // ссылка на live‑PGN
-  const REFRESH_MS = 5000;                                              // период обновления (мс)
+  const PGN_URL    = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // live‑PGN
+  const REFRESH_MS = 5000;                                              // период обновления
   /*********************************************************/
 
   const wrapEl = document.getElementById('boards');
-  const boards = [];                     // массив {ground, wrapper}
+  const boards = [];                       // {ground, wrapper}
 
-  /* создаём новую доску, когда нужно отобразить ещё одну партию */
   function createBoard(){
     const wrapper = document.createElement('div'); wrapper.className = 'board';
 
-    const caption  = document.createElement('div'); caption.className = 'name';
+    const caption = document.createElement('div'); caption.className = 'name';
     wrapper.appendChild(caption);
 
-    const cgHost   = document.createElement('div'); cgHost.className  = 'cg-wrap';
+    const cgHost  = document.createElement('div'); cgHost.className  = 'cg-wrap';
     wrapper.appendChild(cgHost);
 
     wrapEl.appendChild(wrapper);
@@ -67,12 +67,10 @@
     return {ground, wrapper};
   }
 
-  /* гарантируем, что досок не меньше, чем партий */
   function ensureBoards(n){
     while (boards.length < n) boards.push(createBoard());
   }
 
-  /* отрисовываем все полученные партии */
   function render(games){
     ensureBoards(games.length);
 
@@ -81,12 +79,11 @@
       wrapper.querySelector('.name').textContent = `${g.white} — ${g.black}`;
 
       const chess = new Chess();
-      g.moves.forEach(m=>chess.move(m));
+      g.moves.forEach(m => chess.move(m));
       ground.set({fen: chess.fen()});
     });
   }
 
-  /* очень простой разбор PGN — нам нужны только имена и список ходов */
   function parsePGN(text){
     return text
       .split(/\n\n(?=\[Event|\[Site|\[White|\[Black)/g).filter(Boolean)
@@ -94,16 +91,15 @@
         const white = (block.match(/\[White "([^"]+)"/)||['','?'])[1];
         const black = (block.match(/\[Black "([^"]+)"/)||['','?'])[1];
         const moves = block
-          .replace(/\[.*?\]\s*/g,'')          // убрать теги
-          .replace(/\{[^}]*\}/g,'')           // убрать комментарии
-          .replace(/\d+\.(\.\.)?/g,'')        // убрать номера ходов
+          .replace(/\[.*?\]\s*/g,'')         // теги
+          .replace(/\{[^}]*\}/g,'')          // комментарии
+          .replace(/\d+\.(\.\.)?/g,'')       // номера ходов
           .trim().split(/\s+/)
           .filter(s=>!/^(1-0|0-1|1\/2-1\/2|\*)$/.test(s));
         return {white, black, moves};
       });
   }
 
-  /* периодически тянем PGN и обновляем доски */
   async function fetchAndUpdate(){
     try{
       const txt = await (await fetch(PGN_URL + '?t=' + Date.now())).text();
