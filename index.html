@@ -1,45 +1,78 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8"/>
-<title>Live PGN viewer</title>
+  <meta charset="utf-8" />
+  <title>Live‑шахматы</title>
 
-<!-- chess.js – логика; chessground – доска -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/1.0.0/chess.min.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/chessground@9/chessground.min.js" defer></script>
+  <!-- chessground стили — ИМЕННО ЭТОГО раньше не хватало -->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/chessground@9.0.4/dist/chessground.base.css">
 
-<style>
-  body{margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#f6f6f6}
-  #board{width:90vmin;height:90vmin}
-</style>
+  <style>
+    body{margin:0;font-family:sans-serif;background:#f4f4f4}
+    .board{width:320px;height:320px;margin:1rem;float:left;border-radius:8px;box-shadow:0 0 6px rgba(0,0,0,.1)}
+    .name{padding:.3rem .5rem;text-align:center;background:#fff;border-bottom:1px solid #e5e5e5}
+  </style>
 </head>
 <body>
-  <div id="board"></div>
+  <div id="boards"></div>
 
+  <!-- chessground логика -->
+  <script src="https://cdn.jsdelivr.net/npm/chessground@9.0.4/dist/chessground.min.js"></script>
+
+  <!-- ваша логика -->
   <script type="module">
-    import { Chess } from 'https://cdn.skypack.dev/chess.js';
+  // --- настройки ---
+  const pgnURL   = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // Worker‑прокси
+  const delayMs  = 2000;     // опрос раз в 2‑сек
+  // ---------------
 
-    const board = Chessground(document.getElementById('board'),
-                              {fen: Chess.DEFAULT_POSITION});
-    const chess = new Chess();
+  const boardsDiv = document.getElementById('boards');
+  let games = {}; // {id:{cg, lastMove}}
 
-    const API = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // 👈 ваш Worker
+  async function loadPGN(){
+    const txt = await fetch(pgnURL,{cache:'no-store'}).then(r=>r.text());
+    const list = txt.trim().split(/\n\n(?=\[Event)/);   // один PGN = два пустых \n
+    list.forEach(pgn=>{
+      const id   = pgn.match(/\[Site "([^"]+)"/)?.[1] ?? Math.random();
+      const white= pgn.match(/\[White "([^"]+)"/)?.[1] ?? '';
+      const black= pgn.match(/\[Black "([^"]+)"/)?.[1] ?? '';
 
-    async function poll() {
-      const res  = await fetch(API);
-      const pgn  = await res.text();
-      const list = pgn
-        .replace(/\[[^\]]*]/g,'')      // убираем теги PGN
-        .trim().split(/\s+/)           // делим по пробелам
-        .filter(m => /^[a-h]/.test(m)); // оставляем ходы
+      if(!games[id]) createBoard(id,white,black);
+      updateBoard(id,pgn);
+    });
+  }
 
-      while (chess.history().length < list.length) {
-        chess.move(list[chess.history().length]);
-        board.set({fen: chess.fen()});
-      }
+  function createBoard(id,white,black){
+    const wrap = document.createElement('div');
+    wrap.className='board';
+    wrap.innerHTML = `<div class="name">${white} – ${black}</div><div id="b${id}" style="height:calc(100% - 32px)"></div>`;
+    boardsDiv.appendChild(wrap);
+    games[id] = { cg: Chessground(document.getElementById('b'+id), { viewOnly:true }), lastMove:'' };
+  }
+
+  function updateBoard(id,pgn){
+    const moves = pgn.split(/\n\n/).pop().trim(); // строка ходов
+    if(moves!==games[id].lastMove){
+      games[id].lastMove = moves;
+      const fen = pgn2fen(moves);
+      games[id].cg.set({fen});
     }
-    setInterval(poll, 1000); // опрос раз в секунду
-    poll();
+  }
+
+  // простейший PGN‑»FEN» (хватает для показа последней позиции)
+  function pgn2fen(moves){
+    // используем библиотечку chess.js — один import на лету
+    return import('https://cdn.jsdelivr.net/npm/@jackstenglein/chess.js@1.0.0/dist/esm/chess.js')
+      .then(({Chess})=>{
+        const chess = new Chess();
+        chess.load_pgn(moves);
+        return chess.fen();
+      });
+  }
+
+  // цикл опроса
+  loadPGN(); setInterval(loadPGN,delayMs);
   </script>
 </body>
 </html>
