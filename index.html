@@ -1,78 +1,95 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <title>Live‑шахматы</title>
+<meta charset="utf-8">
+<title>Live‑шахматы</title>
 
-  <!-- chessground стили — ИМЕННО ЭТОГО раньше не хватало -->
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/chessground@9.0.4/dist/chessground.base.css">
+<!-- Стили доски Chessground -->
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/chessground@9.0.4/dist/chessground.base.css">
 
-  <style>
-    body{margin:0;font-family:sans-serif;background:#f4f4f4}
-    .board{width:320px;height:320px;margin:1rem;float:left;border-radius:8px;box-shadow:0 0 6px rgba(0,0,0,.1)}
-    .name{padding:.3rem .5rem;text-align:center;background:#fff;border-bottom:1px solid #e5e5e5}
-  </style>
+<style>
+  body{margin:0;font-family:sans-serif;background:#f4f4f4}
+  .board{width:320px;height:320px;margin:1rem;float:left;
+         border-radius:8px;box-shadow:0 0 6px rgba(0,0,0,.1)}
+  .name{padding:.3rem .5rem;text-align:center;background:#fff;
+        border-bottom:1px solid #e5e5e5}
+</style>
 </head>
 <body>
   <div id="boards"></div>
 
-  <!-- chessground логика -->
+  <!-- Библиотеки -->
   <script src="https://cdn.jsdelivr.net/npm/chessground@9.0.4/dist/chessground.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chess.js@1.0.0/dist/chess.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mliebelt/pgn-parser@1.6.1/dist/pgn-parser.min.js"></script>
 
-  <!-- ваша логика -->
-  <script type="module">
-  // --- настройки ---
-  const pgnURL   = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // Worker‑прокси
-  const delayMs  = 2000;     // опрос раз в 2‑сек
-  // ---------------
+  <script>
+  // ===  Настройки  ==========================================================
+  // Адрес вашего Cloudflare Worker'а, который отдаёт PGN‑поток
+  const BRIDGE_URL = 'https://pgn-bridge.zerarfernando.workers.dev/pgn';
+  // Период опроса (мс)
+  const POLL_MS   = 3000;
+  // ==========================================================================
 
-  const boardsDiv = document.getElementById('boards');
-  let games = {}; // {id:{cg, lastMove}}
+  const root    = document.getElementById('boards');
+  const grounds = new Map();        // boardNo → Chessground
 
-  async function loadPGN(){
-    const txt = await fetch(pgnURL,{cache:'no-store'}).then(r=>r.text());
-    const list = txt.trim().split(/\n\n(?=\[Event)/);   // один PGN = два пустых \n
-    list.forEach(pgn=>{
-      const id   = pgn.match(/\[Site "([^"]+)"/)?.[1] ?? Math.random();
-      const white= pgn.match(/\[White "([^"]+)"/)?.[1] ?? '';
-      const black= pgn.match(/\[Black "([^"]+)"/)?.[1] ?? '';
-
-      if(!games[id]) createBoard(id,white,black);
-      updateBoard(id,pgn);
+  // Разбор потока PGN‑Live
+  function parsePGN(txt){
+    // PGN‑Live склеивает партии без переноса строк → добавляем их сами
+    const raw = txt.trim().replace(/\s+\[/g, '\n[')
+                         .split('\n[').map(s => '[' + s);
+    return raw.map(pgn => {
+      const data = window.pgnParser.parse(pgn)[0];
+      return {
+        board : +data.tags.Board || 0,
+        white : data.tags.White  || '?',
+        black : data.tags.Black  || '?',
+        moves : data.moves.map(m => m.notation.notation)
+      };
     });
   }
 
-  function createBoard(id,white,black){
-    const wrap = document.createElement('div');
-    wrap.className='board';
-    wrap.innerHTML = `<div class="name">${white} – ${black}</div><div id="b${id}" style="height:calc(100% - 32px)"></div>`;
-    boardsDiv.appendChild(wrap);
-    games[id] = { cg: Chessground(document.getElementById('b'+id), { viewOnly:true }), lastMove:'' };
+  // Показываем / обновляем доски
+  function renderBoards(games){
+    games.forEach(g => {
+      // создаём контейнер и доску, если их ещё нет
+      if(!grounds.has(g.board)){
+        const wrap = document.createElement('div');
+        wrap.className = 'board';
+        wrap.innerHTML =
+          `<div class="name">${g.white} – ${g.black}</div>
+           <div id="cg${g.board}"></div>`;
+        root.appendChild(wrap);
+        const cg = Chessground(document.getElementById(`cg${g.board}`),
+                               {viewOnly:true});
+        grounds.set(g.board, cg);
+      }
+
+      // рассчитываем позицию после всех ходов
+      const chess = new window.Chess();
+      g.moves.forEach(m => chess.move(m));
+      grounds.get(g.board).set({fen: chess.fen()});
+
+      // обновляем фамилии (мало ли изменятся)
+      const wrap = grounds.get(g.board).container.parentNode;
+      wrap.querySelector('.name').textContent = `${g.white} – ${g.black}`;
+    });
   }
 
-  function updateBoard(id,pgn){
-    const moves = pgn.split(/\n\n/).pop().trim(); // строка ходов
-    if(moves!==games[id].lastMove){
-      games[id].lastMove = moves;
-      const fen = pgn2fen(moves);
-      games[id].cg.set({fen});
+  // Периодически тянем PGN с Worker'а
+  async function load(){
+    try{
+      const txt = await fetch(`${BRIDGE_URL}?${Date.now()}`, {cache:'no-store'})
+                         .then(r => r.text());
+      renderBoards(parsePGN(txt));
+    }catch(e){
+      console.error('Ошибка загрузки PGN:', e);
     }
   }
-
-  // простейший PGN‑»FEN» (хватает для показа последней позиции)
-  function pgn2fen(moves){
-    // используем библиотечку chess.js — один import на лету
-    return import('https://cdn.jsdelivr.net/npm/@jackstenglein/chess.js@1.0.0/dist/esm/chess.js')
-      .then(({Chess})=>{
-        const chess = new Chess();
-        chess.load_pgn(moves);
-        return chess.fen();
-      });
-  }
-
-  // цикл опроса
-  loadPGN(); setInterval(loadPGN,delayMs);
+  load();                       // первая загрузка сразу
+  setInterval(load, POLL_MS);   // затем — каждые POLL_MS
   </script>
 </body>
 </html>
