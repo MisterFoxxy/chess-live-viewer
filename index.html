@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<title>Live PGN viewer</title>
+
+<!-- chess.js – логика; chessground – доска -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/1.0.0/chess.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chessground@9/chessground.min.js" defer></script>
+
+<style>
+  body{margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#f6f6f6}
+  #board{width:90vmin;height:90vmin}
+</style>
+</head>
+<body>
+  <div id="board"></div>
+
+  <script type="module">
+    import { Chess } from 'https://cdn.skypack.dev/chess.js';
+
+    const board = Chessground(document.getElementById('board'),
+                              {fen: Chess.DEFAULT_POSITION});
+    const chess = new Chess();
+
+    const API = 'https://pgn-bridge.zerarfernando.workers.dev/pgn'; // 👈 ваш Worker
+
+    async function poll() {
+      const res  = await fetch(API);
+      const pgn  = await res.text();
+      const list = pgn
+        .replace(/\[[^\]]*]/g,'')      // убираем теги PGN
+        .trim().split(/\s+/)           // делим по пробелам
+        .filter(m => /^[a-h]/.test(m)); // оставляем ходы
+
+      while (chess.history().length < list.length) {
+        chess.move(list[chess.history().length]);
+        board.set({fen: chess.fen()});
+      }
+    }
+    setInterval(poll, 1000); // опрос раз в секунду
+    poll();
+  </script>
+</body>
+</html>
