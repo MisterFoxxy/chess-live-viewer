@@ -1,85 +1,108 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf‑8">
-  <title>Live‑шахматы</title>
+  <meta charset="utf-8" />
+  <title>Он‑лайн партии</title>
 
-  <!-- chess‑ground и chess.js БЕЗ integrity, чтобы браузер не блокировал -->
-  <link  href="https://cdnjs.cloudflare.com/ajax/libs/chessground/9.1.1/chessground.css"  rel="stylesheet">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessground/9.1.1/chessground.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.13.4/chess.min.js"></script>
+  <!-- css и js chessground -->
+  <link  rel="stylesheet"
+         href="https://cdn.jsdelivr.net/npm/chessground@9/dist/chessground.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chessground@9/dist/chessground.min.js"></script>
+
+  <!-- chess.js для «перематывания» ходов -->
+  <script src="https://cdn.jsdelivr.net/npm/chess.js@1.0.0-beta.1/dist/chess.min.js"></script>
 
   <style>
-    body{margin:0;font-family:sans-serif;background:#f5f5f5}
-    #boards{display:flex;flex-wrap:wrap;justify-content:center}
-    .board{width:340px;margin:1rem;background:#fff;
-           border-radius:8px;box-shadow:0 0 6px rgba(0,0,0,.1)}
-    .name{padding:.4rem;text-align:center;font-weight:600;border-bottom:1px solid #eee}
-    .cg-wrap{width:340px;height:340px}
+    body{margin:0;padding:0;font-family:sans-serif;background:#f3f3f3}
+    #boards{display:flex;flex-wrap:wrap;justify-content:center;gap:24px;padding:24px}
+    .block{width:340px;background:#fff;border-radius:8px;
+           box-shadow:0 2px 8px rgba(0,0,0,.08);overflow:hidden}
+    .block .names{padding:6px 8px;font-weight:600;text-align:center;border-bottom:1px solid #eee}
+    .cg-wrap{width:100%;height:340px}
   </style>
 </head>
 <body>
   <div id="boards"></div>
 
 <script>
-/* ---------- НАСТРОЙКИ ---------- */
-const PGN_URL    = 'https://pgn-bridge.zerarfernando.workers.dev/pgn';
-const REFRESH_MS = 5_000;
-const PIECE_CDN  = 'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/alpha/60/';
+/* ---------- настройки ---------- */
+const PGN_URL     = 'https://pgn-bridge.zerarfernando.workers.dev/pgn';
+const REFRESH_MS  = 5000;          // как часто опрашивать (мс)
 /* --------------------------------*/
 
-const boardsDiv = document.getElementById('boards');
-const boards = [];
+const container = document.getElementById('boards');
+const boardPool = [];              // сюда кладём созданные доски
 
-function createBoard(){
-  const wrap = document.createElement('div'); wrap.className='board';
-  const title= document.createElement('div'); title.className='name'; wrap.appendChild(title);
-  const cgDiv= document.createElement('div'); cgDiv.className='cg-wrap'; wrap.appendChild(cgDiv);
-  boardsDiv.appendChild(wrap);
-
-  const ground = Chessground(cgDiv,{
-    viewOnly:true,
-    resizable:true,
-    sprite: { url: PIECE_CDN+'wp.png',  // любую существующую картинку из набора
-              size: 60,  cache: false } // cache=false → при смене CDN сразу видно результат
-  });
-
-  return {ground,title};
+// где лежат картинки фигур
+function pieceTheme (piece) {
+  // piece приходит вроде "wK", "bq" и т.п.
+  return `pieces/${piece}.png`;
 }
 
-function render(games){
-  while(boards.length < games.length) boards.push(createBoard());
-  games.forEach((g,i)=>{
-    const {ground,title} = boards[i];
-    title.textContent = `${g.white} — ${g.black}`;
+/* создать ещё один визуальный блок */
+function spawnBlock () {
+  const wrap   = document.createElement('div'); wrap.className = 'block';
+  const names  = document.createElement('div'); names.className = 'names';
+  const board  = document.createElement('div'); board.className = 'cg-wrap';
+  wrap.append(names, board); container.appendChild(wrap);
+
+  const cg = Chessground(board, {
+    viewOnly   : true,
+    coordinates: false,
+    sprite     : { url: '',     // путь игнорируется когда pieceTheme есть
+                   margin: 2,
+                   pieceTheme }
+  });
+  return {wrap, names, ground: cg};
+}
+
+/* отобразить все партии */
+function render (games) {
+  // досок должно хватить
+  while (boardPool.length < games.length) boardPool.push(spawnBlock());
+
+  games.forEach((g, idx) => {
+    const {wrap, names, ground} = boardPool[idx];
+    names.textContent = `${g.white} — ${g.black}`;
+
     const chess = new Chess();
-    g.moves.forEach(m=>chess.move(m));
+    g.moves.forEach(m => chess.move(m));
     ground.set({fen: chess.fen()});
+    wrap.style.display = '';                       // на всякий случай
+  });
+
+  // если стало партий меньше, «лишние» блоки прячем
+  for (let i = games.length; i < boardPool.length; i++)
+    boardPool[i].wrap.style.display = 'none';
+}
+
+/* простой парсер PGN -> {white, black, moves[]} */
+function parsePGN (txt) {
+  return txt.split(/\n\n(?=\[Event)/).filter(Boolean).map(block => {
+    const tag = t => (block.match(new RegExp(`\\[${t} "([^"]+)"`))||[])[1]||'?');
+    const moves = block
+      .replace(/\[\w+ "[^"]*"\]\s*/g, '')      // теги
+      .replace(/\{[^}]*\}/g, '')               // комменты
+      .replace(/\d+\.(\.\.)?/g, '')            // номера ходов
+      .trim().split(/\s+/)
+      .filter(s => !/^(1-0|0-1|1\/2-1\/2|\*)$/.test(s));
+    return {white: tag('White'), black: tag('Black'), moves};
   });
 }
 
-function parsePGN(pgn){
-  return pgn
-    .split(/\n\n(?=\[Event)/).filter(Boolean)
-    .map(block=>{
-      const tag = key=> (block.match(new RegExp(`\\[${key} "([^"]+)"`))||[])[1]||'?';
-      const moves = block
-        .replace(/\[.*]/g,'')
-        .replace(/\{[^}]*}/g,'')
-        .replace(/\d+\.(\.\.)?/g,'')
-        .trim().split(/\s+/)
-        .filter(x=>!/^1-0|0-1|1\/2-1\/2|\*$/.test(x));
-      return {white:tag('White'), black:tag('Black'), moves};
-    });
+/* циклическое обновление */
+async function fetchAndUpdate () {
+  try {
+    const resp = await fetch(PGN_URL + '?t=' + Date.now());
+    const txt  = await resp.text();
+    render(parsePGN(txt));
+  } catch (e) {
+    console.error('Ошибка при получении PGN:', e);
+  } finally {
+    setTimeout(fetchAndUpdate, REFRESH_MS);
+  }
 }
 
-async function fetchAndUpdate(){
-  try{
-    const txt = await fetch(PGN_URL + '?t=' + Date.now()).then(r=>r.text());
-    render(parsePGN(txt));
-  }catch(e){ console.error('Ошибка при получении PGN:',e); }
-  setTimeout(fetchAndUpdate, REFRESH_MS);
-}
 fetchAndUpdate();
 </script>
 </body>
